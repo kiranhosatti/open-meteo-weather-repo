@@ -360,13 +360,20 @@ jobs:
           echo "✅ Packaged contents:"
           unzip -l ../function.zip
 
-      - name: Upload Lambda Code
+      - name: Upload Lambda Code via S3
         run: |
-          echo "⬆️ Uploading code to Lambda..."
+          echo "⬆️ Uploading package to S3..."
+          ZIP_NAME=function-${{ github.sha }}.zip
+          
+          aws s3 cp function.zip \
+            s3://${{ steps.get-outputs.outputs.bucket_name }}/$ZIP_NAME
+          
+          echo "🚀 Updating Lambda from S3..."
+          
           aws lambda update-function-code \
             --function-name ${{ steps.get-outputs.outputs.function_name }} \
-            --zip-file fileb://function.zip
-
+            --s3-bucket ${{ steps.get-outputs.outputs.bucket_name }} \
+            --s3-key $ZIP_NAME
           aws lambda wait function-updated \
             --function-name ${{ steps.get-outputs.outputs.function_name }}
           echo "✅ Lambda code updated successfully!"
