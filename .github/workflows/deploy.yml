@@ -289,27 +289,40 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Check & Clean Bad Stack
-        run: |
-          STACK_STATUS=$(aws cloudformation describe-stacks \
-            --stack-name ${{ env.CFN_STACK_NAME }} \
-            --query 'Stacks[0].StackStatus' \
-            --output text 2>/dev/null || echo "STACK_NOT_FOUND")
+  - name: Check & Clean Bad Stack
+  run: |
+    STACK_STATUS=$(aws cloudformation describe-stacks \
+      --stack-name ${{ env.CFN_STACK_NAME }} \
+      --query 'Stacks[0].StackStatus' \
+      --output text 2>/dev/null || echo "STACK_NOT_FOUND")
 
-          echo "Current stack status: $STACK_STATUS"
+    echo "Current stack status: $STACK_STATUS"
 
-          if [[ "$STACK_STATUS" == *"ROLLBACK_COMPLETE"* ]] || \
-             [[ "$STACK_STATUS" == *"CREATE_FAILED"* ]] || \
-             [[ "$STACK_STATUS" == *"DELETE_FAILED"* ]]; then
-            echo "⚠️ Stack in bad state — deleting and recreating..."
-            aws cloudformation delete-stack \
-              --stack-name ${{ env.CFN_STACK_NAME }}
-            aws cloudformation wait stack-delete-complete \
-              --stack-name ${{ env.CFN_STACK_NAME }}
-            echo "✅ Stack deleted — will recreate fresh"
-          else
-            echo "✅ Stack status OK: $STACK_STATUS"
-          fi
+    # 🟢 Case 1 — No stack exists
+    if [[ "$STACK_STATUS" == "STACK_NOT_FOUND" ]]; then
+      echo "🟢 No existing stack — creating fresh one."
+      exit 0
+    fi
+
+    # 🔴 Case 2 — Stack is in bad state
+    if [[ "$STACK_STATUS" == *"ROLLBACK_COMPLETE"* ]] || \
+        [[ "$STACK_STATUS" == *"DELETE_FAILED"* ]] || \
+        [[ "$STACK_STATUS" == *"CREATE_FAILED"* ]]; then
+
+      echo "⚠️ Stack in bad state — deleting..."
+
+      aws cloudformation delete-stack \
+        --stack-name ${{ env.CFN_STACK_NAME }}
+
+      aws cloudformation wait stack-delete-complete \
+        --stack-name ${{ env.CFN_STACK_NAME }}
+
+      echo "✅ Stack deleted successfully."
+      exit 0
+    fi
+
+    # 🟢 Case 3 — Stack is healthy
+    echo "✅ Stack status OK — continuing deployment."  
 
       - name: Deploy CloudFormation Stack
         run: |
