@@ -69,7 +69,7 @@ jobs:
       # --- Security Scan --- ✅ FIX 1 & 2: clean command, no inline comments
       - name: Security Scan (Checkov)
         run: |
-          echo "🔒 Running security scan with Checkov..."
+          echo "Running security scan with Checkov..."
           checkov \
             -d cloudformation/ \
             --framework cloudformation \
