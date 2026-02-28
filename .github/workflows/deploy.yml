@@ -151,31 +151,81 @@ jobs:
 
           echo "✅ No drift detected!"
 
+      # ✅ FIXED: Handles !Sub !Ref !GetAtt and all CFN intrinsic tags
       - name: Check Required Tags in Template
         run: |
           echo "🏷️ Checking required AWS tags in templates..."
           python3 << 'EOF'
-          import yaml, sys, glob
+          import sys, glob
+          import yaml
+
+          # Register all CloudFormation intrinsic tags
+          class CFNLoader(yaml.SafeLoader):
+              pass
+
+          def cfn_tag_constructor(loader, tag_suffix, node):
+              if isinstance(node, yaml.ScalarNode):
+                  return loader.construct_scalar(node)
+              elif isinstance(node, yaml.SequenceNode):
+                  return loader.construct_sequence(node)
+              elif isinstance(node, yaml.MappingNode):
+                  return loader.construct_mapping(node)
+
+          CFN_TAGS = [
+              '!Sub', '!Ref', '!GetAtt', '!Join', '!Select',
+              '!Split', '!FindInMap', '!Base64', '!Condition',
+              '!Equals', '!If', '!Not', '!Or', '!And',
+              '!ImportValue', '!Transform', '!Cidr'
+          ]
+
+          for tag in CFN_TAGS:
+              CFNLoader.add_multi_constructor(tag, cfn_tag_constructor)
+
+          CFNLoader.add_multi_constructor(
+              '!', lambda loader, tag, node: cfn_tag_constructor(loader, tag, node)
+          )
 
           REQUIRED_TAGS = ["Environment", "Owner", "Project", "CostCenter"]
           all_passed = True
 
-          for filepath in glob.glob("cloudformation/*.yml") + glob.glob("cloudformation/*.yaml"):
+          files = glob.glob("cloudformation/*.yml") + glob.glob("cloudformation/*.yaml")
+
+          if not files:
+              print("⚠️ No CloudFormation templates found in cloudformation/")
+              sys.exit(1)
+
+          for filepath in files:
+              print(f"\n📄 Checking: {filepath}")
               with open(filepath) as f:
-                  template = yaml.safe_load(f)
+                  template = yaml.load(f, Loader=CFNLoader)
 
               resources = template.get("Resources", {})
+
               for resource_name, resource in resources.items():
                   props = resource.get("Properties", {})
-                  tags = {t["Key"]: t["Value"] for t in props.get("Tags", [])}
+                  raw_tags = props.get("Tags", [])
+
+                  if isinstance(raw_tags, list):
+                      tags = {
+                          t["Key"]: t["Value"]
+                          for t in raw_tags
+                          if isinstance(t, dict) and "Key" in t
+                      }
+                  elif isinstance(raw_tags, dict):
+                      tags = raw_tags
+                  else:
+                      tags = {}
+
                   missing = [tag for tag in REQUIRED_TAGS if tag not in tags]
+
                   if missing:
-                      print(f"❌ {filepath} → {resource_name} missing tags: {missing}")
+                      print(f"  ❌ {resource_name} missing tags: {missing}")
                       all_passed = False
                   else:
-                      print(f"✅ {filepath} → {resource_name} has all required tags")
+                      print(f"  ✅ {resource_name} has all required tags")
 
           if not all_passed:
+              print("\n💥 Tag check failed! Add missing tags to your template.")
               sys.exit(1)
 
           print("\n✅ All tag checks passed!")
