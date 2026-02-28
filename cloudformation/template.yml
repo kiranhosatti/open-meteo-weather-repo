@@ -86,7 +86,6 @@ Resources:
     Type: AWS::Lambda::LayerVersion
     Properties:
       LayerName: pandas-layer
-      Description: Pandas dependency layer
       Content:
         S3Bucket: open-meteo-weather-sys-bk1
         S3Key: pandas_layer.zip
