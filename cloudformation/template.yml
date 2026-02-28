@@ -78,36 +78,50 @@ Resources:
           Value: open-meteo-weather
         - Key: CostCenter
           Value: engineering
-
+PandasLayer:
+ Type: AWS::Lambda::LayerVersion
+ Properties:
+  LayerName: pandas-layer
+  Description: Pandas dependency layer
+  Content:
+    S3Bucket: open-meteo-weather-sys-bk
+    S3Key: package-lambda-code/pandas_layer.zip
+  CompatibleRuntimes:
+    - python3.11
   # ─────────────────────────────────
   # 3. Lambda Function  ← WAS MISSING
   # ─────────────────────────────────
   LambdaFunction:
-    Type: AWS::Lambda::Function
-    Properties:
-      FunctionName: !Ref LambdaFunctionName
-      Runtime: python3.11
-      Handler: app_api_extractor.lambda_handler
-      Role: !GetAtt LambdaExecutionRole.Arn
-      Timeout: 300
-      MemorySize: 512
-      Environment:
-        Variables:
-          BUCKET_NAME: !Ref OutputBucket
-          ENVIRONMENT: !Ref Environment
-      Code:
-        ZipFile: |
-          def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "placeholder"}
-      Tags:
-        - Key: Environment
-          Value: !Ref Environment
-        - Key: Owner
-          Value: beastleohfslilly
-        - Key: Project
-          Value: open-meteo-weather
-        - Key: CostCenter
-          Value: engineering
+  Type: AWS::Lambda::Function
+  Properties:
+    FunctionName: !Ref LambdaFunctionName
+    Runtime: python3.11
+    Handler: app_api_extractor.lambda_handler
+    Role: !GetAtt LambdaExecutionRole.Arn
+    Timeout: 300
+    MemorySize: 512
+
+    Layers:
+      - !Ref PandasLayer
+
+    Environment:
+      Variables:
+        BUCKET_NAME: !Ref OutputBucket
+        ENVIRONMENT: !Ref Environment
+
+    Code:
+      S3Bucket: !Ref OutputBucket
+      S3Key: placeholder.zip
+
+    Tags:
+      - Key: Environment
+        Value: !Ref Environment
+      - Key: Owner
+        Value: beastleohfslilly
+      - Key: Project
+        Value: open-meteo-weather
+      - Key: CostCenter
+        Value: engineering
 
   # ─────────────────────────────────
   # 4. CloudWatch Log Group
