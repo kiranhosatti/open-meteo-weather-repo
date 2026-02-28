@@ -15,7 +15,7 @@ on:
         default: 'https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true'
 
 env:
-  AWS_REGION: us-east-1
+  AWS_REGION: ap-south-1
   LAMBDA_FUNCTION_NAME: api-to-csv-function
   CFN_STACK_NAME: api-to-csv-prod
 
