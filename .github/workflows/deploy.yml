@@ -355,7 +355,7 @@ jobs:
           cp csv_extractor/app_csv_extractor.py package/
 
           cd package && zip -r ../function.zip .
-          cd..
+          cd ..
           ls -lh pandas_layer.zip
 
           
