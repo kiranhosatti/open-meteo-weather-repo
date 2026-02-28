@@ -1,3 +1,5 @@
+
+
 name: Lambda API to CSV Pipeline
 
 on:
@@ -20,6 +22,7 @@ env:
   CFN_STACK_NAME: api-to-csv-prod
 
 jobs:
+  
   # ─────────────────────────────────────────
   # JOB 1: Validate CloudFormation Templates
   # ─────────────────────────────────────────
@@ -324,6 +327,16 @@ jobs:
           fi
 
           echo "✅ Stack status OK — continuing deployment."
+      - name: DEBUG AWS ENV
+        run: |
+          echo "=== AWS IDENTITY ==="
+          aws sts get-caller-identity
+
+          echo "=== REGION ==="
+          echo $AWS_REGION
+
+          echo "=== CHECK BUCKET EXISTS ==="
+          aws s3 ls s3://open-meteo-layers-bk1 --region ap-south-1
 
       - name: Deploy CloudFormation Stack
         run: |
