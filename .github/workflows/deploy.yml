@@ -150,6 +150,7 @@ jobs:
 
           echo "✅ No drift detected!"
 
+      # ✅ FIXED: Skips resource types that don't support Tags (e.g. PandasLayer)
       - name: Check Required Tags in Template
         run: |
           echo "🏷️ Checking required AWS tags in templates..."
@@ -183,6 +184,14 @@ jobs:
           )
 
           REQUIRED_TAGS = ["Environment", "Owner", "Project", "CostCenter"]
+
+          # AWS resource types that do NOT support Tags
+          SKIP_RESOURCE_TYPES = [
+              "AWS::Lambda::LayerVersion",
+              "AWS::IAM::Policy",
+              "AWS::CloudFormation::WaitCondition",
+          ]
+
           all_passed = True
 
           files = glob.glob("cloudformation/*.yml") + glob.glob("cloudformation/*.yaml")
@@ -199,6 +208,12 @@ jobs:
               resources = template.get("Resources", {})
 
               for resource_name, resource in resources.items():
+                  resource_type = resource.get("Type", "")
+
+                  if resource_type in SKIP_RESOURCE_TYPES:
+                      print(f"  ⏭️  {resource_name} ({resource_type}) — skipped (no Tag support)")
+                      continue
+
                   props = resource.get("Properties", {})
                   raw_tags = props.get("Tags", [])
 
@@ -216,7 +231,7 @@ jobs:
                   missing = [tag for tag in REQUIRED_TAGS if tag not in tags]
 
                   if missing:
-                      print(f"  ❌ {resource_name} missing tags: {missing}")
+                      print(f"  ❌ {resource_name} ({resource_type}) missing tags: {missing}")
                       all_passed = False
                   else:
                       print(f"  ✅ {resource_name} has all required tags")
@@ -249,7 +264,7 @@ jobs:
               Ready to deploy to \`${{ env.AWS_REGION }}\` 🚀`
             })
 
-   # ─────────────────────────────────────────
+  # ─────────────────────────────────────────
   # JOB 2: Deploy Lambda
   # ─────────────────────────────────────────
   deploy-lambda:
@@ -292,10 +307,13 @@ jobs:
             aws cloudformation wait stack-delete-complete \
               --stack-name ${{ env.CFN_STACK_NAME }}
             echo "✅ Stack deleted — will recreate fresh"
+          else
+            echo "✅ Stack status OK: $STACK_STATUS"
           fi
 
       - name: Deploy CloudFormation Stack
         run: |
+          echo "🚀 Deploying CloudFormation stack..."
           aws cloudformation deploy \
             --template-file cloudformation/template.yml \
             --stack-name ${{ env.CFN_STACK_NAME }} \
@@ -309,10 +327,13 @@ jobs:
               Project=open-meteo-weather \
               CostCenter=engineering \
             --no-fail-on-empty-changeset
+          echo "✅ Stack deployed!"
 
       - name: Get Stack Outputs
         id: get-outputs
         run: |
+          echo "🔍 Reading stack outputs..."
+
           FUNCTION_NAME=$(aws cloudformation describe-stacks \
             --stack-name ${{ env.CFN_STACK_NAME }} \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionName'].OutputValue" \
@@ -323,22 +344,31 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
             --output text)
 
+          if [ -z "$FUNCTION_NAME" ] || [ "$FUNCTION_NAME" == "None" ]; then
+            echo "⚠️ Stack output empty — using env fallback"
+            FUNCTION_NAME="${{ env.LAMBDA_FUNCTION_NAME }}"
+          fi
+
+          echo "✅ Lambda: $FUNCTION_NAME"
+          echo "✅ Bucket: $BUCKET_NAME"
           echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
           echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
-      # ✅ STEP 1: Download Layer
+          aws lambda get-function --function-name $FUNCTION_NAME
+          echo "✅ Lambda confirmed exists!"
+
       - name: Download Pandas Layer from S3
         run: |
+          echo "📥 Downloading pandas layer..."
           aws s3 cp \
             s3://open-meteo-weather-sys-bk/package-lambda-code/pandas_layer.zip \
             pandas_layer.zip
-
           ls -lh pandas_layer.zip
 
-      # ✅ STEP 2: Publish Layer
       - name: Publish Pandas Layer
         id: publish-layer
         run: |
+          echo "📤 Publishing pandas layer..."
           LAYER_VERSION=$(aws lambda publish-layer-version \
             --layer-name pandas-layer \
             --zip-file fileb://pandas_layer.zip \
@@ -346,11 +376,12 @@ jobs:
             --query 'Version' \
             --output text)
 
+          echo "✅ Layer version: $LAYER_VERSION"
           echo "layer_version=$LAYER_VERSION" >> $GITHUB_OUTPUT
 
-      # ✅ STEP 3: Attach Layer to Function
       - name: Attach Layer to Lambda
         run: |
+          echo "🔗 Attaching layer to Lambda..."
           ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
           aws lambda update-function-configuration \
@@ -359,23 +390,21 @@ jobs:
 
           aws lambda wait function-updated \
             --function-name ${{ steps.get-outputs.outputs.function_name }}
+          echo "✅ Layer attached!"
 
-      # ✅ Package WITHOUT pandas
       - name: Package Lambda Code
         run: |
+          echo "📦 Packaging Lambda code..."
           mkdir -p package
-
           cp api_extractor/app_api_extractor.py package/
           cp csv_extractor/app_csv_extractor.py package/
-
-          cd package
-          zip -r ../function.zip .
-          cd ..
-
-          ls -lh function.zip
+          cd package && zip -r ../function.zip .
+          ls -lh ../function.zip
+          echo "✅ Packaged successfully"
 
       - name: Upload Lambda Code via S3
         run: |
+          echo "⬆️ Uploading Lambda code..."
           ZIP_NAME=function-${{ github.sha }}.zip
 
           aws s3 cp function.zip \
@@ -388,6 +417,7 @@ jobs:
 
           aws lambda wait function-updated \
             --function-name ${{ steps.get-outputs.outputs.function_name }}
+          echo "✅ Lambda code updated successfully!"
 
   # ─────────────────────────────────────────
   # JOB 3: Invoke Lambda & Download Parquet
@@ -405,7 +435,6 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # ✅ FIX: Get bucket name from stack (not hardcoded)
       - name: Get Bucket Name from Stack
         id: get-bucket
         run: |
@@ -420,6 +449,7 @@ jobs:
       - name: Invoke Lambda Function
         id: invoke
         run: |
+          echo "🚀 Invoking Lambda..."
           aws lambda invoke \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
             --payload '{}' \
