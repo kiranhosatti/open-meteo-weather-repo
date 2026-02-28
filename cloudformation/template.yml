@@ -110,11 +110,6 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref OutputBucket
           ENVIRONMENT: !Ref Environment
-      code:
-        s3Bucket: !Ref OutputBucket
-        s3Key: initial-placeholder.zip
-      # ✅ FIXED: Using inline ZipFile instead of missing S3 placeholder.zip
-      # Real code is uploaded by the GitHub Actions deploy job
       Code:
         ZipFile: |
           def lambda_handler(event, context):
