@@ -72,7 +72,7 @@ jobs:
       - name: Security Scan (Checkov)
         run: |
           echo "🔒 Running security scan with Checkov..."
-          checkov -d cloudformation/ \
+          checkov \ -d. \ 
             --framework cloudformation \
             --output cli \
             --soft-fail \  
