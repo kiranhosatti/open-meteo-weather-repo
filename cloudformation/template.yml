@@ -82,15 +82,15 @@ Resources:
   # ─────────────────────────────────
   # 3. Pandas Lambda Layer
   # ─────────────────────────────────
- # PandasLayer:
- #   Type: AWS::Lambda::LayerVersion
-  #  Properties:
-  #    LayerName: pandas-layer
-   #   Content:
-   #     S3Bucket: open-meteo-layers-bk1
-    #    S3Key: pandas_layer.zip
-     # CompatibleRuntimes:
-      #  - python3.11
+  PandasLayer:
+    Type: AWS::Lambda::LayerVersion
+    Properties:
+      LayerName: pandas-layer
+      Content:
+        S3Bucket: open-meteo-layers-bk1
+        S3Key: pandas_layer.zip
+      CompatibleRuntimes:
+        - python3.11
 
   # ─────────────────────────────────
   # 4. Lambda Function
@@ -105,7 +105,7 @@ Resources:
       Timeout: 300
       MemorySize: 512
       Layers:
-        - arn:aws:lambda:ap-south-1:986640827387:layer:test-layer:1
+        - Ref: PandasLayer
       Environment:
         Variables:
           BUCKET_NAME: !Ref OutputBucket
@@ -113,7 +113,7 @@ Resources:
       Code:
         ZipFile: |
           def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "placeholder - real code uploaded by CI"}
+              return {"statusCode": 200, "body": "placeholder")
       Tags:
         - Key: Environment
           Value: !Ref Environment
