@@ -117,6 +117,15 @@ Resources:
     Properties:
       LogGroupName: !Sub "/aws/lambda/${LambdaFunctionName}"
       RetentionInDays: 30
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Owner
+          Value: beastleohfslilly
+        - Key: Project
+          Value: open-meteo-weather
+        - Key: CostCenter
+          Value: engineering
 
 # ─────────────────────────────────
 # Outputs  ← WAS MISSING (caused None error)
