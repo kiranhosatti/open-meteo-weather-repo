@@ -249,7 +249,7 @@ jobs:
               Ready to deploy to \`${{ env.AWS_REGION }}\` 🚀`
             })
 
-  # ─────────────────────────────────────────
+   # ─────────────────────────────────────────
   # JOB 2: Deploy Lambda
   # ─────────────────────────────────────────
   deploy-lambda:
@@ -292,13 +292,10 @@ jobs:
             aws cloudformation wait stack-delete-complete \
               --stack-name ${{ env.CFN_STACK_NAME }}
             echo "✅ Stack deleted — will recreate fresh"
-          else
-            echo "✅ Stack status OK: $STACK_STATUS"
           fi
 
       - name: Deploy CloudFormation Stack
         run: |
-          echo "🚀 Deploying CloudFormation stack..."
           aws cloudformation deploy \
             --template-file cloudformation/template.yml \
             --stack-name ${{ env.CFN_STACK_NAME }} \
@@ -312,14 +309,10 @@ jobs:
               Project=open-meteo-weather \
               CostCenter=engineering \
             --no-fail-on-empty-changeset
-          echo "✅ Stack deployed!"
 
-      # ✅ FIX: Get both Lambda name AND bucket name from stack outputs
       - name: Get Stack Outputs
         id: get-outputs
         run: |
-          echo "🔍 Reading stack outputs..."
-
           FUNCTION_NAME=$(aws cloudformation describe-stacks \
             --stack-name ${{ env.CFN_STACK_NAME }} \
             --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionName'].OutputValue" \
@@ -330,53 +323,71 @@ jobs:
             --query "Stacks[0].Outputs[?OutputKey=='BucketName'].OutputValue" \
             --output text)
 
-          # Fallback to env var if output is empty
-          if [ -z "$FUNCTION_NAME" ] || [ "$FUNCTION_NAME" == "None" ]; then
-            echo "⚠️ Stack output empty — using env fallback"
-            FUNCTION_NAME="${{ env.LAMBDA_FUNCTION_NAME }}"
-          fi
-
-          echo "✅ Lambda: $FUNCTION_NAME"
-          echo "✅ Bucket: $BUCKET_NAME"
-
           echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
           echo "bucket_name=$BUCKET_NAME" >> $GITHUB_OUTPUT
 
-          # Verify Lambda exists
-          aws lambda get-function --function-name $FUNCTION_NAME
-          echo "✅ Lambda confirmed exists!"
+      # ✅ STEP 1: Download Layer
+      - name: Download Pandas Layer from S3
+        run: |
+          aws s3 cp \
+            s3://open-meteo-weather-sys-bk/package-lambda-code/pandas_layer.zip \
+            pandas_layer.zip
 
+          ls -lh pandas_layer.zip
+
+      # ✅ STEP 2: Publish Layer
+      - name: Publish Pandas Layer
+        id: publish-layer
+        run: |
+          LAYER_VERSION=$(aws lambda publish-layer-version \
+            --layer-name pandas-layer \
+            --zip-file fileb://pandas_layer.zip \
+            --compatible-runtimes python3.11 \
+            --query 'Version' \
+            --output text)
+
+          echo "layer_version=$LAYER_VERSION" >> $GITHUB_OUTPUT
+
+      # ✅ STEP 3: Attach Layer to Function
+      - name: Attach Layer to Lambda
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+
+          aws lambda update-function-configuration \
+            --function-name ${{ steps.get-outputs.outputs.function_name }} \
+            --layers arn:aws:lambda:${{ env.AWS_REGION }}:$ACCOUNT_ID:layer:pandas-layer:${{ steps.publish-layer.outputs.layer_version }}
+
+          aws lambda wait function-updated \
+            --function-name ${{ steps.get-outputs.outputs.function_name }}
+
+      # ✅ Package WITHOUT pandas
       - name: Package Lambda Code
         run: |
-          echo "📦 Installing dependencies..."
           mkdir -p package
-      
+
           cp api_extractor/app_api_extractor.py package/
           cp csv_extractor/app_csv_extractor.py package/
 
-          cd package && zip -r ../function.zip .
+          cd package
+          zip -r ../function.zip .
           cd ..
-          ls -lh pandas_layer.zip
 
-          
+          ls -lh function.zip
 
       - name: Upload Lambda Code via S3
         run: |
-          echo "⬆️ Uploading package to S3..."
           ZIP_NAME=function-${{ github.sha }}.zip
-          
+
           aws s3 cp function.zip \
             s3://${{ steps.get-outputs.outputs.bucket_name }}/$ZIP_NAME
-          
-          echo "🚀 Updating Lambda from S3..."
-          
+
           aws lambda update-function-code \
             --function-name ${{ steps.get-outputs.outputs.function_name }} \
             --s3-bucket ${{ steps.get-outputs.outputs.bucket_name }} \
             --s3-key $ZIP_NAME
+
           aws lambda wait function-updated \
             --function-name ${{ steps.get-outputs.outputs.function_name }}
-          echo "✅ Lambda code updated successfully!"
 
   # ─────────────────────────────────────────
   # JOB 3: Invoke Lambda & Download Parquet
