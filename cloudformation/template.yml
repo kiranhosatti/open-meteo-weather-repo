@@ -87,7 +87,7 @@ Resources:
     Properties:
       LayerName: pandas-layer
       Content:
-        S3Bucket: open-meteo-weather-sys-bk1
+        S3Bucket: open-meteo-layers-bk1
         S3Key: pandas_layer.zip
       CompatibleRuntimes:
         - python3.11
