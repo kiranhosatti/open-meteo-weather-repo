@@ -80,7 +80,7 @@ Resources:
           Value: engineering
 
   # ─────────────────────────────────
-  # 3. Pandas Lambda Layer   ← FIXED indentation (was outside Resources)
+  # 3. Pandas Lambda Layer
   # ─────────────────────────────────
   PandasLayer:
     Type: AWS::Lambda::LayerVersion
@@ -94,7 +94,7 @@ Resources:
         - python3.11
 
   # ─────────────────────────────────
-  # 4. Lambda Function   ← FIXED indentation (was outside Resources)
+  # 4. Lambda Function
   # ─────────────────────────────────
   LambdaFunction:
     Type: AWS::Lambda::Function
@@ -111,9 +111,12 @@ Resources:
         Variables:
           BUCKET_NAME: !Ref OutputBucket
           ENVIRONMENT: !Ref Environment
+      # ✅ FIXED: Using inline ZipFile instead of missing S3 placeholder.zip
+      # Real code is uploaded by the GitHub Actions deploy job
       Code:
-        S3Bucket: open-meteo-weather-sys-bk
-        S3Key: package-lambda-code/placeholder.zip
+        ZipFile: |
+          def lambda_handler(event, context):
+              return {"statusCode": 200, "body": "placeholder - real code uploaded by CI"}
       Tags:
         - Key: Environment
           Value: !Ref Environment
