@@ -88,8 +88,8 @@ Resources:
       LayerName: pandas-layer
       Description: Pandas dependency layer
       Content:
-        S3Bucket: open-meteo-weather-sys-bk
-        S3Key: package-lambda-code/pandas_layer.zip
+        S3Bucket: open-meteo-weather-sys-bk1
+        S3Key: pandas_layer.zip
       CompatibleRuntimes:
         - python3.11
 
