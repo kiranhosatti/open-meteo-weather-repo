@@ -5,7 +5,14 @@ on:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  schedule:
+    - cron: '0 8 * * *'
   workflow_dispatch:
+    inputs:
+      api_url:
+        description: 'API URL to fetch data from'
+        required: false
+        default: 'https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true'
 
 env:
   AWS_REGION: us-east-1
@@ -14,6 +21,9 @@ env:
   CFN_STACK_NAME: api-to-csv-prod
 
 jobs:
+  # ─────────────────────────────────────────
+  # JOB 1: Validate CloudFormation Templates
+  # ─────────────────────────────────────────
   validate-cloudformation:
     name: Validate CloudFormation Templates
     runs-on: ubuntu-latest
@@ -56,8 +66,10 @@ jobs:
             fi
           done
           if [ "$ALL_GOOD" = false ]; then
+            echo "💥 One or more required files are missing!"
             exit 1
           fi
+          echo "✅ All required files found!"
 
       - name: Validate CFN Template (AWS CLI)
         run: |
@@ -83,19 +95,116 @@ jobs:
 
       - name: Validate Stack Name Convention
         run: |
+          echo "📋 Checking stack name conventions..."
           python3 << 'EOF'
           import re, sys, os
+
           PATTERN = r'^[a-z][a-z0-9-]{2,}-(dev|qa|staging|prod)$'
           stack_name = os.environ.get("CFN_STACK_NAME", "")
+
           print(f"Stack name: {stack_name}")
+
           if not re.match(PATTERN, stack_name):
-              print(f"❌ Stack name '{stack_name}' does not match pattern")
+              print(f"❌ Stack name '{stack_name}' does not match pattern: {PATTERN}")
+              print("Expected format: <service>-<env> e.g. api-to-csv-prod")
               sys.exit(1)
+
           print("✅ Stack name convention passed!")
           EOF
         env:
           CFN_STACK_NAME: ${{ env.CFN_STACK_NAME }}
 
+      - name: Check for Stack Drift
+        run: |
+          echo "🔍 Detecting drift on existing stack..."
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.CFN_STACK_NAME }} \
+            --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null || echo "STACK_NOT_FOUND")
+
+          if [ "$STACK_STATUS" == "STACK_NOT_FOUND" ]; then
+            echo "⚠️ Stack does not exist yet — skipping drift check"
+            exit 0
+          fi
+
+          DRIFT_ID=$(aws cloudformation detect-stack-drift \
+            --stack-name ${{ env.CFN_STACK_NAME }} \
+            --query 'StackDriftDetectionId' \
+            --output text)
+
+          sleep 15
+
+          DRIFT_STATUS=$(aws cloudformation describe-stack-drift-detection-status \
+            --stack-drift-detection-id $DRIFT_ID \
+            --query 'StackDriftStatus' \
+            --output text)
+
+          echo "Drift Status: $DRIFT_STATUS"
+
+          if [ "$DRIFT_STATUS" == "DRIFTED" ]; then
+            echo "❌ Stack has drifted!"
+            aws cloudformation describe-stack-resource-drifts \
+              --stack-name ${{ env.CFN_STACK_NAME }} \
+              --stack-resource-drift-status-filters MODIFIED DELETED
+            exit 1
+          fi
+
+          echo "✅ No drift detected!"
+
+      - name: Check Required Tags in Template
+        run: |
+          echo "🏷️ Checking required AWS tags in templates..."
+          python3 << 'EOF'
+          import yaml, sys, glob
+
+          REQUIRED_TAGS = ["Environment", "Owner", "Project", "CostCenter"]
+          all_passed = True
+
+          for filepath in glob.glob("cloudformation/*.yml") + glob.glob("cloudformation/*.yaml"):
+              with open(filepath) as f:
+                  template = yaml.safe_load(f)
+
+              resources = template.get("Resources", {})
+              for resource_name, resource in resources.items():
+                  props = resource.get("Properties", {})
+                  tags = {t["Key"]: t["Value"] for t in props.get("Tags", [])}
+                  missing = [tag for tag in REQUIRED_TAGS if tag not in tags]
+                  if missing:
+                      print(f"❌ {filepath} → {resource_name} missing tags: {missing}")
+                      all_passed = False
+                  else:
+                      print(f"✅ {filepath} → {resource_name} has all required tags")
+
+          if not all_passed:
+              sys.exit(1)
+
+          print("\n✅ All tag checks passed!")
+          EOF
+
+      - name: Post Validation Summary to PR
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## ✅ CloudFormation Validation Passed
+              | Check | Status |
+              |---|---|
+              | AWS CLI Validation | ✅ Passed |
+              | cfn-lint | ✅ Passed |
+              | Security Scan (Checkov) | ✅ Passed |
+              | Stack Name Convention | ✅ Passed |
+              | Drift Detection | ✅ No Drift |
+              | Tag Compliance | ✅ Passed |
+              Ready to deploy to \`${{ env.AWS_REGION }}\` 🚀`
+            })
+
+  # ─────────────────────────────────────────
+  # JOB 2: Deploy Lambda
+  # ─────────────────────────────────────────
   deploy-lambda:
     name: Deploy Lambda
     runs-on: ubuntu-latest
@@ -118,24 +227,32 @@ jobs:
         with:
           python-version: '3.11'
 
-      # ✅ Package YOUR actual folders into lambda zip
-      - name: Package Lambda Code
+      - name: Check & Clean Bad Stack
         run: |
-          echo "📦 Installing dependencies..."
-          pip install -r requirements.txt -t package/
+          STACK_STATUS=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.CFN_STACK_NAME }} \
+            --query 'Stacks[0].StackStatus' \
+            --output text 2>/dev/null || echo "STACK_NOT_FOUND")
 
-          echo "📁 Copying your source files..."
-          cp api_extractor/app_api_extractor.py package/
-          cp csv_extractor/app_csv_extractor.py package/
+          echo "Current stack status: $STACK_STATUS"
 
-          echo "🗜️ Creating zip..."
-          cd package && zip -r ../function.zip .
-
-          echo "✅ Lambda packaged:"
-          unzip -l ../function.zip
+          if [[ "$STACK_STATUS" == *"ROLLBACK_COMPLETE"* ]] || \
+             [[ "$STACK_STATUS" == *"CREATE_FAILED"* ]] || \
+             [[ "$STACK_STATUS" == *"DELETE_FAILED"* ]]; then
+            echo "⚠️ Stack is in bad state: $STACK_STATUS"
+            echo "🗑️ Deleting stack so it can be recreated..."
+            aws cloudformation delete-stack \
+              --stack-name ${{ env.CFN_STACK_NAME }}
+            aws cloudformation wait stack-delete-complete \
+              --stack-name ${{ env.CFN_STACK_NAME }}
+            echo "✅ Stack deleted — will recreate fresh"
+          else
+            echo "✅ Stack status OK: $STACK_STATUS"
+          fi
 
       - name: Deploy CloudFormation Stack
         run: |
+          echo "🚀 Deploying CloudFormation stack..."
           aws cloudformation deploy \
             --template-file cloudformation/template.yml \
             --stack-name ${{ env.CFN_STACK_NAME }} \
@@ -146,21 +263,53 @@ jobs:
             --tags \
               Environment=prod \
               Owner=beastleohfslilly \
-              Project=api-to-csv \
+              Project=open-meteo-weather \
               CostCenter=engineering \
             --no-fail-on-empty-changeset
+          echo "✅ Stack deployed!"
+
+      - name: Get Lambda Function Name from Stack
+        id: get-lambda
+        run: |
+          FUNCTION_NAME=$(aws cloudformation describe-stacks \
+            --stack-name ${{ env.CFN_STACK_NAME }} \
+            --query "Stacks[0].Outputs[?OutputKey=='LambdaFunctionName'].OutputValue" \
+            --output text)
+
+          echo "Lambda function name: $FUNCTION_NAME"
+          echo "function_name=$FUNCTION_NAME" >> $GITHUB_OUTPUT
+
+          aws lambda get-function --function-name $FUNCTION_NAME
+          echo "✅ Lambda function confirmed exists!"
+
+      - name: Package Lambda Code
+        run: |
+          echo "📦 Installing dependencies..."
+          pip install -r requirements.txt -t package/
+
+          echo "📁 Copying source files..."
+          cp api_extractor/app_api_extractor.py package/
+          cp csv_extractor/app_csv_extractor.py package/
+
+          echo "🗜️ Zipping..."
+          cd package && zip -r ../function.zip .
+          echo "✅ Packaged contents:"
+          unzip -l ../function.zip
 
       - name: Upload Lambda Code
         run: |
+          echo "⬆️ Uploading code to Lambda..."
           aws lambda update-function-code \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
+            --function-name ${{ steps.get-lambda.outputs.function_name }} \
             --zip-file fileb://function.zip
 
-      - name: Wait for Lambda Update
-        run: |
           aws lambda wait function-updated \
-            --function-name ${{ env.LAMBDA_FUNCTION_NAME }}
+            --function-name ${{ steps.get-lambda.outputs.function_name }}
+          echo "✅ Lambda code updated successfully!"
 
+  # ─────────────────────────────────────────
+  # JOB 3: Invoke Lambda & Download CSV
+  # ─────────────────────────────────────────
   invoke-and-download:
     name: Invoke Lambda & Get CSV
     runs-on: ubuntu-latest
@@ -177,7 +326,7 @@ jobs:
       - name: Invoke Lambda Function
         id: invoke
         run: |
-          API_URL="https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true"
+          API_URL="${{ github.event.inputs.api_url || 'https://api.open-meteo.com/v1/forecast?latitude=52.52&longitude=13.41&current_weather=true' }}"
 
           aws lambda invoke \
             --function-name ${{ env.LAMBDA_FUNCTION_NAME }} \
