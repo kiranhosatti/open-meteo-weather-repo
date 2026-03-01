@@ -105,7 +105,7 @@ Resources:
       Timeout: 300
       MemorySize: 512
       Layers:
-        - Ref: PandasLayer
+        - !Ref PandasLayer              # ✅ FIX 1: was "- Ref:" missing the "!"
       Environment:
         Variables:
           BUCKET_NAME: !Ref OutputBucket
@@ -113,7 +113,7 @@ Resources:
       Code:
         ZipFile: |
           def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "placeholder")
+              return {"statusCode": 200, "body": "placeholder"}  # ✅ FIX 2: was ")" now "}"
       Tags:
         - Key: Environment
           Value: !Ref Environment
