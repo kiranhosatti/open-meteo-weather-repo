@@ -90,8 +90,8 @@ Resources:
     Properties:
       FunctionName: !Ref LambdaFunctionName
       Runtime: python3.11
-      layer:
-        - arn:aws:lambda:ap-south-1:986640827387:layer:pandas-layer:1
+      Layers:
+        - arn:aws:lambda:ap-south-1:986640827387:layer:pandas-layer:3
       Handler: app_api_extractor.lambda_handler
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 300
