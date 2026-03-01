@@ -80,20 +80,11 @@ Resources:
           Value: engineering
 
   # ─────────────────────────────────
-  # 3. Pandas Lambda Layer
-  # ─────────────────────────────────
-  PandasLayer:
-    Type: AWS::Lambda::LayerVersion
-    Properties:
-      LayerName: pandas-layer
-      Content:
-        S3Bucket: open-meteo-layers-bk1
-        S3Key: pandas_layer.zip
-      CompatibleRuntimes:
-        - python3.11
-
-  # ─────────────────────────────────
-  # 4. Lambda Function
+  # 3. Lambda Function
+  # NOTE: PandasLayer is NOT defined here — it is published
+  # and attached by the GitHub Actions deploy job instead.
+  # This avoids the AWS::EarlyValidation::ResourceExistenceCheck
+  # hook blocking the deployment.
   # ─────────────────────────────────
   LambdaFunction:
     Type: AWS::Lambda::Function
@@ -104,8 +95,6 @@ Resources:
       Role: !GetAtt LambdaExecutionRole.Arn
       Timeout: 300
       MemorySize: 512
-      Layers:
-        - !Ref PandasLayer              # ✅ FIX 1: was "- Ref:" missing the "!"
       Environment:
         Variables:
           BUCKET_NAME: !Ref OutputBucket
@@ -113,7 +102,7 @@ Resources:
       Code:
         ZipFile: |
           def lambda_handler(event, context):
-              return {"statusCode": 200, "body": "placeholder"}  # ✅ FIX 2: was ")" now "}"
+              return {"statusCode": 200, "body": "placeholder"}
       Tags:
         - Key: Environment
           Value: !Ref Environment
@@ -125,7 +114,7 @@ Resources:
           Value: engineering
 
   # ─────────────────────────────────
-  # 5. CloudWatch Log Group
+  # 4. CloudWatch Log Group
   # ─────────────────────────────────
   LambdaLogGroup:
     Type: AWS::Logs::LogGroup
